@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { collection, addDoc, updateDoc, doc, onSnapshot, query, orderBy, serverTimestamp } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 
 export type KanbanColumn = 'New Lead' | 'Contacted' | 'Proposal Sent';
 
@@ -10,12 +12,15 @@ export interface Lead {
   status: KanbanColumn;
   date: string;
   score: 'High' | 'Medium' | 'Low';
+  createdAt?: any;
 }
 
 interface LeadsContextType {
   leads: Lead[];
-  addLead: (lead: Omit<Lead, 'id' | 'date' | 'score' | 'status'>) => void;
-  moveLead: (id: string, newStatus: KanbanColumn) => void;
+  loading: boolean;
+  error: string | null;
+  addLead: (lead: Omit<Lead, 'id' | 'date' | 'score' | 'status' | 'createdAt'>) => Promise<void>;
+  moveLead: (id: string, newStatus: KanbanColumn) => Promise<void>;
   isModalOpen: boolean;
   openModal: () => void;
   closeModal: () => void;
@@ -23,82 +28,69 @@ interface LeadsContextType {
 
 const LeadsContext = createContext<LeadsContextType | null>(null);
 
-const STORAGE_KEY = 'windore_leads';
-
 function scoreFromBill(bill: number): Lead['score'] {
   if (bill >= 200) return 'High';
   if (bill >= 100) return 'Medium';
   return 'Low';
 }
 
-const defaultLeads: Lead[] = [
-  {
-    id: 'L-1042',
-    name: 'Sarah Jenkins',
-    phone: '(555) 201-4455',
-    monthlyBill: 280,
-    score: 'High',
-    status: 'New Lead',
-    date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
-  },
-  {
-    id: 'L-1041',
-    name: 'Michael Chang',
-    phone: '(555) 334-7788',
-    monthlyBill: 150,
-    score: 'Medium',
-    status: 'Contacted',
-    date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
-  },
-  {
-    id: 'L-1040',
-    name: 'The Martinez Family',
-    phone: '(555) 892-1234',
-    monthlyBill: 320,
-    score: 'High',
-    status: 'Proposal Sent',
-    date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
-  },
-];
-
 export function LeadsProvider({ children }: { children: React.ReactNode }) {
-  const [leads, setLeads] = useState<Lead[]>(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      return stored ? JSON.parse(stored) : defaultLeads;
-    } catch {
-      return defaultLeads;
-    }
-  });
-
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(leads));
-  }, [leads]);
+    const q = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const leadsData: Lead[] = [];
+      snapshot.forEach((docSnap) => {
+        leadsData.push({ id: docSnap.id, ...docSnap.data() } as Lead);
+      });
+      setLeads(leadsData);
+      setLoading(false);
+    }, (err) => {
+      console.error("Firebase fetch error:", err);
+      // Fallback or ignore locally if offline initially
+      setLoading(false);
+    });
 
-  const addLead = useCallback((data: Omit<Lead, 'id' | 'date' | 'score' | 'status'>) => {
-    const newLead: Lead = {
-      id: `L-${Date.now()}`,
-      name: data.name,
-      phone: data.phone,
-      monthlyBill: data.monthlyBill,
-      score: scoreFromBill(data.monthlyBill),
-      status: 'New Lead',
-      date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
-    };
-    setLeads(prev => [newLead, ...prev]);
+    return () => unsubscribe();
   }, []);
 
-  const moveLead = useCallback((id: string, newStatus: KanbanColumn) => {
-    setLeads(prev => prev.map(l => l.id === id ? { ...l, status: newStatus } : l));
+  const addLead = useCallback(async (data: Omit<Lead, 'id' | 'date' | 'score' | 'status' | 'createdAt'>) => {
+    try {
+      const newLead = {
+        name: data.name,
+        phone: data.phone,
+        monthlyBill: data.monthlyBill,
+        score: scoreFromBill(data.monthlyBill),
+        status: 'New Lead',
+        date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
+        createdAt: serverTimestamp(),
+      };
+      await addDoc(collection(db, 'leads'), newLead);
+    } catch (err) {
+      console.error("Error adding lead:", err);
+      setError("Failed to add lead");
+    }
+  }, []);
+
+  const moveLead = useCallback(async (id: string, newStatus: KanbanColumn) => {
+    try {
+      // Optimistic update in state is automatically handled by onSnapshot for real-time
+      await updateDoc(doc(db, 'leads', id), { status: newStatus });
+    } catch (err) {
+      console.error("Error moving lead:", err);
+      setError("Failed to update lead status");
+    }
   }, []);
 
   const openModal = useCallback(() => setIsModalOpen(true), []);
   const closeModal = useCallback(() => setIsModalOpen(false), []);
 
   return (
-    <LeadsContext.Provider value={{ leads, addLead, moveLead, isModalOpen, openModal, closeModal }}>
+    <LeadsContext.Provider value={{ leads, loading, error, addLead, moveLead, isModalOpen, openModal, closeModal }}>
       {children}
     </LeadsContext.Provider>
   );
