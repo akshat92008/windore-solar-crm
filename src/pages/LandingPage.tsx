@@ -147,7 +147,7 @@ export default function LandingPage() {
       </section>
 
       {/* ── FINANCING ─────────────────────────────────────── */}
-      <section id="financing" className="py-24 bg-earth-900 relative overflow-hidden border-t border-white/5">
+      <section id="financing" className="py-24 bg-earth-900 relative overflow-hidden">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
           <ScrollReveal className="text-center max-w-3xl mx-auto mb-16">
             <h2 className="text-3xl md:text-5xl font-display font-bold text-white mb-4">
