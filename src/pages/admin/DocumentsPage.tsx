@@ -1,33 +1,12 @@
-import React, { useRef, useState, useMemo } from 'react';
-import { FileText, UploadCloud, Search, FileImage, File, Loader2, Trash2, Download } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { FileText, Search, FileImage, File, Loader2, Trash2, Download } from 'lucide-react';
 import { useDocuments } from '../../context/DocumentsContext';
 
 export default function DocumentsPage() {
-  const { documents, loading, error, uploadProgress, uploadDocument, deleteDocument } = useDocuments();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { documents, loading, error, deleteDocument } = useDocuments();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('All Types');
-  const [isUploading, setIsUploading] = useState(false);
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const projectName = window.prompt("Enter the project tag this document belongs to, or leave blank for 'General'") || 'General';
-
-    setIsUploading(true);
-    try {
-      await uploadDocument(file, projectName);
-    } catch (err) {
-      console.error(err);
-    }
-    setIsUploading(false);
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
 
   const filteredDocs = useMemo(() => {
     return documents.filter(doc => {
@@ -54,27 +33,8 @@ export default function DocumentsPage() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-display font-bold text-earth-900">Document Vault</h1>
-          <p className="text-earth-500 mt-1">Secure storage for utility bills and agreements via Firebase.</p>
+          <p className="text-earth-500 mt-1">Secure storage view of utility bills and agreements.</p>
         </div>
-
-        <input
-          type="file"
-          ref={fileInputRef}
-          className="hidden"
-          onChange={handleFileUpload}
-        />
-
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={isUploading || uploadProgress !== null}
-          className="flex items-center gap-2 px-4 py-2 bg-earth-900 text-white rounded-xl text-sm font-medium hover:bg-earth-800 transition-colors shadow-sm disabled:opacity-75 disabled:cursor-not-allowed"
-        >
-          {(isUploading || uploadProgress !== null) ? (
-            <><Loader2 className="w-4 h-4 animate-spin" /> Uploading {Math.round(uploadProgress || 0)}%</>
-          ) : (
-            <><UploadCloud className="w-4 h-4" /> Upload Document</>
-          )}
-        </button>
       </div>
 
       {error && <p className="text-red-500 text-sm">{error}</p>}
