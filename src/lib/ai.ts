@@ -1,6 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY as string });
 
 export interface LeadAIResult {
     score: number; // 1-100
@@ -28,27 +28,37 @@ Lead Data:
 Based on this data, provide a structured assessment. A higher monthly bill means higher solar savings potential and should result in a higher score.
 
 Return ONLY a valid JSON object (no markdown, no extra text) in this exact format:
-{
-  "score": <number between 1-100>,
-  "tier": "<'Hot' | 'Warm' | 'Cold'>",
-  "reasoning": "<1-2 sentence explanation of the score>",
-  "recommendedAction": "<specific next step the sales rep should take>"
-}
+{"score":75,"tier":"Warm","reasoning":"This lead has a moderate bill and is worth pursuing.","recommendedAction":"Call within 24 hours to discuss savings potential."}
 
 Scoring Guide:
 - $200+/month bill: Score 80-100 (Hot)
 - $100-199/month bill: Score 50-79 (Warm)
 - Under $100/month bill: Score 20-49 (Cold)
-- Adjust score up if they are further along in the sales process (Contacted or Proposal Sent).`;
+- Adjust score up if they are further along: Contacted +5, Proposal Sent +10`;
 
     const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-1.5-flash',
         contents: prompt,
     });
 
-    const text = response.text ?? '{}';
-    // Strip potential markdown fences
-    const cleaned = text.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(cleaned) as LeadAIResult;
+    const text = response.text ?? '';
+
+    if (!text) {
+        throw new Error('Empty response from Gemini');
+    }
+
+    // Strip potential markdown fences and pull out the JSON object
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+        throw new Error('No JSON found in response');
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]) as LeadAIResult;
+
+    // Validate required fields
+    if (typeof parsed.score !== 'number' || !parsed.tier || !parsed.reasoning) {
+        throw new Error('Invalid AI response structure');
+    }
+
     return parsed;
 }
