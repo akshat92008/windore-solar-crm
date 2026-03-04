@@ -112,8 +112,8 @@ export function LeadsProvider({ children }: { children: React.ReactNode }) {
       });
     } catch (err) {
       console.error("Error scoring lead with AI:", err);
-      // Use aiError (separate state) so it never blocks the leads table
-      setAiError("AI scoring failed. Check your API key or try again.");
+      const msg = err instanceof Error ? err.message : String(err);
+      setAiError(`AI scoring failed: ${msg}`);
     } finally {
       setScoringLeadId(null);
     }
