@@ -1,7 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
-
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY as string });
-
 export interface LeadAIResult {
     score: number; // 1-100
     tier: 'Hot' | 'Warm' | 'Cold';
@@ -10,53 +6,64 @@ export interface LeadAIResult {
 }
 
 /**
- * Uses Gemini Flash to score a solar lead based on their monthly bill.
- * Returns a numeric score, tier, reasoning, and a recommended next action.
+ * Calls the Gemini REST API directly via fetch (browser-safe, no SDK CORS issues).
+ * Returns a structured lead score, tier, reasoning, and recommended action.
  */
 export async function scoreLeadWithAI(
     name: string,
     monthlyBill: number,
     status: string
 ): Promise<LeadAIResult> {
-    const prompt = `You are a solar sales expert AI assistant. Analyze this solar lead and provide a JSON-formatted lead score.
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string;
 
-Lead Data:
+    if (!apiKey) {
+        throw new Error('VITE_GEMINI_API_KEY is not set');
+    }
+
+    const prompt = `You are a solar sales expert AI. Score this solar lead and respond ONLY with a JSON object, no other text.
+
+Lead:
 - Name: ${name}
-- Monthly Electricity Bill: $${monthlyBill}
-- Current CRM Status: ${status}
+- Monthly Bill: $${monthlyBill}
+- CRM Status: ${status}
 
-Based on this data, provide a structured assessment. A higher monthly bill means higher solar savings potential and should result in a higher score.
+Rules:
+- $200+: score 80-100, tier "Hot"
+- $100-199: score 50-79, tier "Warm"  
+- Under $100: score 20-49, tier "Cold"
+- Boost score by 5-10 if status is Contacted or Proposal Sent
 
-Return ONLY a valid JSON object (no markdown, no extra text) in this exact format:
-{"score":75,"tier":"Warm","reasoning":"This lead has a moderate bill and is worth pursuing.","recommendedAction":"Call within 24 hours to discuss savings potential."}
+Respond with only this JSON (no markdown):
+{"score":75,"tier":"Warm","reasoning":"One sentence explanation.","recommendedAction":"One specific next step."}`;
 
-Scoring Guide:
-- $200+/month bill: Score 80-100 (Hot)
-- $100-199/month bill: Score 50-79 (Warm)
-- Under $100/month bill: Score 20-49 (Cold)
-- Adjust score up if they are further along: Contacted +5, Proposal Sent +10`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
-    const response = await ai.models.generateContent({
-        model: 'gemini-1.5-flash',
-        contents: prompt,
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.2, maxOutputTokens: 256 },
+        }),
     });
 
-    const text = response.text ?? '';
-
-    if (!text) {
-        throw new Error('Empty response from Gemini');
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as any)?.error?.message ?? `HTTP ${res.status}`);
     }
 
-    // Strip potential markdown fences and pull out the JSON object
+    const data = await res.json();
+    const text: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+
+    if (!text) throw new Error('Empty response from Gemini');
+
+    // Extract JSON object — strips any accidental markdown fences
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-        throw new Error('No JSON found in response');
-    }
+    if (!jsonMatch) throw new Error('No JSON in Gemini response');
 
     const parsed = JSON.parse(jsonMatch[0]) as LeadAIResult;
 
-    // Validate required fields
-    if (typeof parsed.score !== 'number' || !parsed.tier || !parsed.reasoning) {
+    if (typeof parsed.score !== 'number' || !parsed.tier) {
         throw new Error('Invalid AI response structure');
     }
 
