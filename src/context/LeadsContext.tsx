@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { collection, addDoc, updateDoc, doc, onSnapshot, query, orderBy, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { scoreLeadWithAI, LeadAIResult } from '../lib/ai';
 
 export type KanbanColumn = 'New Lead' | 'Contacted' | 'Proposal Sent';
 
@@ -12,15 +13,23 @@ export interface Lead {
   status: KanbanColumn;
   date: string;
   score: 'High' | 'Medium' | 'Low';
+  aiScore?: number;
+  aiTier?: 'Hot' | 'Warm' | 'Cold';
+  aiReasoning?: string;
+  aiRecommendedAction?: string;
   createdAt?: any;
 }
 
 interface LeadsContextType {
   leads: Lead[];
   loading: boolean;
-  error: string | null;
+  error: string | null;       // Firestore data errors only
+  aiError: string | null;     // AI scoring errors — shown as non-blocking toasts
+  clearAiError: () => void;
   addLead: (lead: Omit<Lead, 'id' | 'date' | 'score' | 'status' | 'createdAt'>) => Promise<void>;
   moveLead: (id: string, newStatus: KanbanColumn) => Promise<void>;
+  scoreLead: (id: string) => Promise<void>;
+  scoringLeadId: string | null;
   isModalOpen: boolean;
   openModal: () => void;
   closeModal: () => void;
@@ -38,7 +47,9 @@ export function LeadsProvider({ children }: { children: React.ReactNode }) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [scoringLeadId, setScoringLeadId] = useState<string | null>(null);
 
   useEffect(() => {
     const q = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
@@ -51,7 +62,7 @@ export function LeadsProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     }, (err) => {
       console.error("Firebase fetch error:", err);
-      // Fallback or ignore locally if offline initially
+      setError("Failed to load leads from database.");
       setLoading(false);
     });
 
@@ -78,7 +89,6 @@ export function LeadsProvider({ children }: { children: React.ReactNode }) {
 
   const moveLead = useCallback(async (id: string, newStatus: KanbanColumn) => {
     try {
-      // Optimistic update in state is automatically handled by onSnapshot for real-time
       await updateDoc(doc(db, 'leads', id), { status: newStatus });
     } catch (err) {
       console.error("Error moving lead:", err);
@@ -86,11 +96,39 @@ export function LeadsProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const scoreLead = useCallback(async (id: string) => {
+    const lead = leads.find(l => l.id === id);
+    if (!lead || scoringLeadId) return;
+
+    setScoringLeadId(id);
+    setAiError(null); // clear any previous AI error
+    try {
+      const result: LeadAIResult = await scoreLeadWithAI(lead.name, lead.monthlyBill, lead.status);
+      await updateDoc(doc(db, 'leads', id), {
+        aiScore: result.score,
+        aiTier: result.tier,
+        aiReasoning: result.reasoning,
+        aiRecommendedAction: result.recommendedAction,
+      });
+    } catch (err) {
+      console.error("Error scoring lead with AI:", err);
+      // Use aiError (separate state) so it never blocks the leads table
+      setAiError("AI scoring failed. Check your API key or try again.");
+    } finally {
+      setScoringLeadId(null);
+    }
+  }, [leads, scoringLeadId]);
+
+  const clearAiError = useCallback(() => setAiError(null), []);
   const openModal = useCallback(() => setIsModalOpen(true), []);
   const closeModal = useCallback(() => setIsModalOpen(false), []);
 
   return (
-    <LeadsContext.Provider value={{ leads, loading, error, addLead, moveLead, isModalOpen, openModal, closeModal }}>
+    <LeadsContext.Provider value={{
+      leads, loading, error, aiError, clearAiError,
+      addLead, moveLead, scoreLead, scoringLeadId,
+      isModalOpen, openModal, closeModal
+    }}>
       {children}
     </LeadsContext.Provider>
   );
